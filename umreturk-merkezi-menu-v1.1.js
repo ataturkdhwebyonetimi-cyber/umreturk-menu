@@ -399,7 +399,7 @@ document
 
     if(!input || !results) return;
 
-    var SEARCH_CACHE_KEY = "ut_site_search_index_v12";
+    var SEARCH_CACHE_KEY = "ut_site_search_index_v13";
     var SEARCH_CACHE_TTL = 6 * 60 * 60 * 1000;
     var searchIndex = null;
     var buildingPromise = null;
@@ -408,6 +408,8 @@ document
     function normalizeTR(value){
         return String(value || "")
             .toLocaleLowerCase("tr-TR")
+            .normalize("NFD")
+            .replace(/\p{M}+/gu,"")
             .replace(/ı/g,"i")
             .replace(/ğ/g,"g")
             .replace(/ü/g,"u")
@@ -489,12 +491,17 @@ document
             throw new Error("Sitemap okunamadı");
         }
 
-        var sitemapNodes = Array.from(xml.querySelectorAll("sitemap > loc"));
-        if(sitemapNodes.length){
-            var childMaps = sitemapNodes
-                .map(function(node){ return node.textContent.trim(); })
-                .filter(Boolean);
+        var locNodes = Array.from(xml.getElementsByTagName("loc"));
 
+        var childMaps = locNodes
+            .filter(function(node){
+                var parent = node.parentNode;
+                return parent && String(parent.localName || parent.nodeName).toLowerCase() === "sitemap";
+            })
+            .map(function(node){ return node.textContent.trim(); })
+            .filter(Boolean);
+
+        if(childMaps.length){
             var nested = [];
             for(var i=0;i<childMaps.length;i++){
                 try{
@@ -505,37 +512,48 @@ document
             return nested;
         }
 
-        return Array.from(xml.querySelectorAll("url > loc"))
+        return locNodes
+            .filter(function(node){
+                var parent = node.parentNode;
+                return parent && String(parent.localName || parent.nodeName).toLowerCase() === "url";
+            })
             .map(function(node){ return node.textContent.trim(); })
             .filter(Boolean);
     }
 
     function cleanUrlList(urls){
         var seen = Object.create(null);
+        var cleaned = [];
 
-        return urls.filter(function(raw){
+        (urls || []).forEach(function(raw){
             try{
                 var url = new URL(raw, location.origin);
 
                 if(url.hostname !== "www.umreturk.com" && url.hostname !== "umreturk.com"){
-                    return false;
+                    return;
                 }
 
                 if(/\.(jpg|jpeg|png|gif|webp|svg|pdf|xml|mp4|mp3|zip|js|css)$/i.test(url.pathname)){
-                    return false;
+                    return;
                 }
 
                 url.hash = "";
 
-                var clean = url.href;
-                if(seen[clean]) return false;
-                seen[clean] = true;
+                /* Arama sayfaları kendi originimizden indirsin.
+                   Böylece www / www'siz yönlendirmeleri CORS'a takılmaz. */
+                url.protocol = location.protocol;
+                url.host = location.host;
 
-                return true;
-            }catch(e){
-                return false;
-            }
+                var clean = url.href;
+                if(seen[clean]) return;
+
+                seen[clean] = true;
+                cleaned.push(clean);
+
+            }catch(e){}
         });
+
+        return cleaned;
     }
 
     function extractPage(html,url){
@@ -600,7 +618,7 @@ document
         }
 
         var sitemapUrls = await collectSitemapUrls(
-            "https://www.umreturk.com/sitemap.xml",
+            location.origin + "/sitemap.xml",
             0
         );
 
@@ -754,6 +772,11 @@ document
 
         ensureIndex()
             .then(function(items){
+
+                if(!items || !items.length){
+                    showState("Site arama dizini oluşturulamadı. Lütfen sayfayı yenileyip tekrar deneyin.");
+                    return;
+                }
 
                 var ranked = items
                     .map(function(item){
