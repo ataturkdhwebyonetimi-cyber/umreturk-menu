@@ -1,3 +1,4 @@
+/* UMRETÜRK MENÜ V15.1 FINAL - ARAMA SONUCU KORUMA */
 /* UmreTürk Merkezi Menü V15 FINAL — Mobil + Masaüstü Garantili Arama — Mobil Site İçi Arama Güncellemesi
    Kaynak: V3.6 toparlanmış menü
    Bu dosyayı değiştirince tüm sayfalardaki menü güncellenir.
@@ -588,7 +589,7 @@ document
 
 (function(){
 
-    var SEARCH_CACHE_KEY = "ut_site_search_index_v15_final";
+    var SEARCH_CACHE_KEY = "ut_site_search_index_v15_1_final";
     var SEARCH_CACHE_TTL = 6 * 60 * 60 * 1000;
 
     var staticIndex = [];
@@ -1096,10 +1097,16 @@ document
             }
 
             /* GARANTİ: önce local static indeksle anında sonuç */
+            var staticMatches = searchItems(q,staticIndex);
             renderInto(q,staticIndex,results,isDesktop);
 
-            /* Sonra tüm sayfa içerikleri hazırsa sonucu zenginleştir */
-            if(normalizeTR(q).length >= 2){
+            /*
+             * KRİTİK V15.1 DÜZELTMESİ:
+             * Hazır indeks sonuç bulduysa sitemap/arka plan indeksi
+             * bu sonucu ASLA ezemez. Böylece "İhram" önce bulunup
+             * 2 saniye sonra "bulunamadı"ya dönmez.
+             */
+            if(normalizeTR(q).length >= 2 && staticMatches.length === 0){
                 ensureEnrichment().then(function(index){
                     if((input.value||"") === q){
                         renderInto(q,index,results,isDesktop);
