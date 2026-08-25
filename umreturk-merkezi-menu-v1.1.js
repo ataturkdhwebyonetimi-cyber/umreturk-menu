@@ -399,7 +399,7 @@ document
 
     if(!input || !results) return;
 
-    var SEARCH_CACHE_KEY = "ut_site_search_index_v13";
+    var SEARCH_CACHE_KEY = "ut_site_search_index_v14";
     var SEARCH_CACHE_TTL = 6 * 60 * 60 * 1000;
     var searchIndex = null;
     var buildingPromise = null;
@@ -617,24 +617,103 @@ document
             return cached;
         }
 
-        var sitemapUrls = await collectSitemapUrls(
-            location.origin + "/sitemap.xml",
-            0
-        );
+        var sitemapUrls = [];
 
-        var urls = cleanUrlList(sitemapUrls);
-
-        if(!urls.length){
-            urls = cleanUrlList(
-                Array.from(document.querySelectorAll("#ut-final-menu a, #ut-final-mobile a"))
-                    .map(function(a){ return a.href; })
-                    .filter(Boolean)
+        try{
+            sitemapUrls = await collectSitemapUrls(
+                location.origin + "/sitemap.xml",
+                0
             );
+        }catch(e){
+            sitemapUrls = [];
         }
+
+        /* Blog veri listesindeki tüm URL'leri ve başlıkları garanti kaynak olarak al. */
+        var seedTitleByUrl = Object.create(null);
+        var guaranteedUrls = [];
+
+        try{
+            if(Array.isArray(blogKategorileri)){
+                blogKategorileri.forEach(function(kategori){
+                    (kategori.yazilar || []).forEach(function(yazi){
+                        if(!yazi || !yazi.link) return;
+
+                        try{
+                            var u = new URL(yazi.link, location.origin);
+                            u.protocol = location.protocol;
+                            u.host = location.host;
+                            u.hash = "";
+
+                            guaranteedUrls.push(u.href);
+                            seedTitleByUrl[u.href] = yazi.baslik || "";
+                        }catch(e){}
+                    });
+                });
+            }
+        }catch(e){}
+
+        /* Menüde görünen diğer bütün sayfaları da ekle. */
+        try{
+            Array.from(
+                document.querySelectorAll(
+                    "#ut-final-menu a[href], #ut-final-mobile a[href]"
+                )
+            ).forEach(function(a){
+                if(!a.href) return;
+
+                try{
+                    var u = new URL(a.href, location.origin);
+                    u.protocol = location.protocol;
+                    u.host = location.host;
+                    u.hash = "";
+
+                    guaranteedUrls.push(u.href);
+
+                    if(!seedTitleByUrl[u.href]){
+                        seedTitleByUrl[u.href] =
+                            String(a.textContent || "")
+                                .replace(/\s+/g," ")
+                                .trim();
+                    }
+                }catch(e){}
+            });
+        }catch(e){}
+
+        /* Sitemap + menü + blog: hepsini birleştir. */
+        var urls = cleanUrlList(
+            (sitemapUrls || []).concat(guaranteedUrls)
+        );
 
         var items = new Array(urls.length);
         var nextIndex = 0;
         var workerCount = Math.min(5, Math.max(1, urls.length));
+
+        function fallbackItem(url){
+            var title =
+                seedTitleByUrl[url] ||
+                decodeURIComponent(
+                    new URL(url).pathname
+                        .replace(/^\/+|\/+$/g,"")
+                        .replace(/[-_]+/g," ")
+                ) ||
+                "UmreTürk";
+
+            title = String(title)
+                .replace(/\s+/g," ")
+                .trim();
+
+            return {
+                url:url,
+                title:title,
+                description:"",
+                headings:title,
+                body:"",
+                searchable:normalizeTR(title + " " + url),
+                titleNorm:normalizeTR(title),
+                descNorm:"",
+                headingsNorm:normalizeTR(title)
+            };
+        }
 
         async function worker(){
             while(true){
@@ -643,9 +722,22 @@ document
 
                 try{
                     var html = await fetchText(urls[i]);
-                    items[i] = extractPage(html,urls[i]);
+                    var page = extractPage(html,urls[i]);
+
+                    /* Menüdeki kısa ve temiz başlığı da arama metnine ekle. */
+                    var seedTitle = seedTitleByUrl[urls[i]] || "";
+                    if(seedTitle){
+                        page.searchable += " " + normalizeTR(seedTitle);
+                        if(!page.title || /^umretürk/i.test(page.title)){
+                            page.title = seedTitle;
+                            page.titleNorm = normalizeTR(seedTitle);
+                        }
+                    }
+
+                    items[i] = page;
                 }catch(e){
-                    items[i] = null;
+                    /* Sayfa fetch edilemese bile menü/blog başlığından sonuç üret. */
+                    items[i] = fallbackItem(urls[i]);
                 }
             }
         }
